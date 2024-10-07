@@ -164,11 +164,11 @@ int main(void)
     PRINTF("Starting Measurement...\n");
     //new_data_rdy = 0;
     //gpio_intr_clear_stat(ADS_INT_PIN);
-    //gpio_res = gpio_intr_en (ADS_INT_PIN, GpioIntrEdgeFalling);
-    //if (gpio_res != GpioOk) {
-    //     PRINTF("Failed Setting DRYin GPIO\n;");
-    //     return -1;
-    //}
+    gpio_res = gpio_intr_en (ADS_INT_PIN, GpioIntrEdgeFalling);
+    if (gpio_res != GpioOk) {
+         PRINTF("Failed Setting DRYin GPIO\n;");
+         return -1;
+    }
     //ADS1298_send_cmd(WAKEUP_CMD, spi);
     //ads1298_delay_us(10000);
     gpio_write(ADS_PIN_Start, true);

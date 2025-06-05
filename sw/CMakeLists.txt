@@ -298,6 +298,8 @@ message( "${Magenta}Root project: ${ROOT_PROJECT}${ColourReset}")
 message( "${Magenta}Source path: ${SOURCE_PATH}${ColourReset}")
 message( "${Magenta}LIB_CRT PATH for Cmake: ${LIB_CRT_P}${ColourReset}")
 message( "${Magenta}LINKER File for Cmake: ${LINK_FILE}${ColourReset}")
+message( "${Magenta}LIB_DRIVERS PATH for Cmake: ${LIB_DRIVERS}${ColourReset}")
+message( "${Magenta}Targetting folder: ${INC_FOLDERS}${ColourReset}")
 message( "${Magenta}Target: ${TARGET}${ColourReset}")
 
 endif()

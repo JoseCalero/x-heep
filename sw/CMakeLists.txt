@@ -41,6 +41,13 @@ if(NOT WIN32)
   set(BoldWhite   "${Esc}[1;37m")
 endif()
 
+# Necessary when cross-compiling with clang+GCC. Otherwise the compiler
+# complains that it cannot compiler a simple test program. Has to be
+# set before the project() command.
+if (${COMPILER} MATCHES "clang")
+  set(CMAKE_TRY_COMPILE_TARGET_TYPE "STATIC_LIBRARY")
+endif()
+
 # set the project name
 project(${PROJECT} ASM C CXX)
 
@@ -82,7 +89,7 @@ FOREACH(file_path ${new_list})
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Prune list
 
-  if( add EQUAL 1 ) # If the file path mathced one of the criterion, add it to the list
+  if( add EQUAL 1 ) # If the file path matched one of the criterion, add it to the list
     # Get the path of the obtained directory
     GET_FILENAME_COMPONENT(dir_path ${file_path} PATH)
 
@@ -355,6 +362,7 @@ if(NOT ${PROJECT} MATCHES "coremark")
     -D${CRT_TYPE} \
     -D${CRTO} \
     -DportasmHANDLE_INTERRUPT=vSystemIrqHandler\
+    ${COMPILER_FLAGS}\
   ")
 else()
   set(COMPILER_LINKER_FLAGS "\
@@ -369,6 +377,11 @@ else()
 endif()
 set(CMAKE_C_FLAGS ${COMPILER_LINKER_FLAGS})
 set(CMAKE_CXX_FLAGS ${COMPILER_LINKER_FLAGS})
+
+
+message( "${Yellow}Compiler/linker flags: ${COMPILER_LINKER_FLAGS}${ColourReset}")
+
+message( "${Magenta}Linked files: ${LINKED_FILES}${ColourReset}")
 
 if (${COMPILER} MATCHES "clang")
      set( CMAKE_C_FLAGS "${CMAKE_C_FLAGS} --target=riscv32 \
@@ -429,6 +442,7 @@ SET(CMAKE_EXE_LINKER_FLAGS  "-T ${LINKER_SCRIPT}  \
                             ${INCLUDE_FOLDERS} \
                              -static ${LINKED_FILES} \
                              -Wl,-Map=${MAINFILE}.map \
+                             -Wl,--gc-sections \
                              -L ${RISCV}/${COMPILER_PREFIX}elf/lib \
                              -lc -lm -lgcc -flto \
                              -fpermissive -fno-rtti -fno-exceptions -fno-threadsafe-statics \
@@ -470,6 +484,9 @@ endif()
 #      SET CUSTOM COMMANDS
 #######################################################################
 
+# Set CMAKE_OBJDUMP to the GCC objdump since we always link with GCC
+set(CMAKE_OBJDUMP "${RISCV}/bin/${COMPILER_PREFIX}elf-objdump")
+
 # Post processing command to create a disassembly file
 add_custom_command(TARGET ${MAINFILE}.elf POST_BUILD
         COMMAND ${CMAKE_OBJDUMP} -S  ${MAINFILE}.elf > ${MAINFILE}.S
@@ -478,17 +495,20 @@ add_custom_command(TARGET ${MAINFILE}.elf POST_BUILD
 # Post processing command to create a hex file
 if((${LINKER} STREQUAL "flash_load") OR (${LINKER} STREQUAL "flash_exec"))
     add_custom_command(TARGET ${MAINFILE}.elf POST_BUILD
-            COMMAND ${CMAKE_OBJCOPY} -O verilog --adjust-vma=-0x40000000 ${MAINFILE}.elf  ${MAINFILE}.hex
+            COMMAND ${CMAKE_OBJCOPY} -O verilog --adjust-vma=-0x40000000 ${MAINFILE}.elf ${MAINFILE}.hex
             COMMENT "Invoking: Hexdump")
 else()
     add_custom_command(TARGET ${MAINFILE}.elf POST_BUILD
-            COMMAND ${CMAKE_OBJCOPY} -O verilog  ${MAINFILE}.elf  ${MAINFILE}.hex
+            COMMAND ${CMAKE_OBJCOPY} -O verilog  ${MAINFILE}.elf ${MAINFILE}.hex
             COMMENT "Invoking: Hexdump")
+    add_custom_command(TARGET ${MAINFILE}.elf POST_BUILD
+            COMMAND ${CMAKE_OBJCOPY} --srec-forceS3 --srec-len 1 -O srec ${MAINFILE}.elf ${MAINFILE}.hex.srec
+            COMMENT "Invoking: SREC Hexdump")
 endif()
 
 add_custom_command(TARGET ${MAINFILE}.elf POST_BUILD
         COMMAND ${CMAKE_OBJCOPY} -O binary  ${MAINFILE}.elf  ${MAINFILE}.bin
-        COMMENT "Invoking: Hexdump")
+        COMMENT "Invoking: Binary dump")
 
 # Pre-processing command to create disassembly for each source file
 if ((${COMPILER} MATCHES "gcc") OR (${COMPILER} MATCHES "clang"))

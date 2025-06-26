@@ -178,17 +178,17 @@ void vTaskCLIMonitor(void *pvParams) {
             continue; // Ignore empty commands
         }
 
-        if (strncmp(cmd_buf, "heap", 4) == 0) {
+        if (strncmp(cmd_buf, "h", 4) == 0) {
             UART_PRINTF("[HEAP] Free: %u bytes\n", xPortGetFreeHeapSize());
-        } else if (strncmp(cmd_buf, "stack", 5) == 0) {
+        } else if (strncmp(cmd_buf, "s", 5) == 0) {
             UART_PRINTF("[STACK] Flash: %u, Checker: %u\n",
                         uxTaskGetStackHighWaterMark(xFlashTaskHandle),
                         uxTaskGetStackHighWaterMark(xCheckTaskHandle));
-        } else if (strncmp(cmd_buf, "tasklist", 8) == 0) {
+        } else if (strncmp(cmd_buf, "t", 8) == 0) {
             char taskList[256];
             vTaskList(taskList);
             UART_PRINTF("[TASKLIST]\n%s\n", taskList);
-        } else if (strncmp(cmd_buf, "flash", 5) == 0) {
+        } else if (strncmp(cmd_buf, "f", 5) == 0) {
             UART_PRINTF("[CLI] Manually triggering flash task.\n");
             xTaskNotifyGive(xFlashTaskHandle);
         } else {

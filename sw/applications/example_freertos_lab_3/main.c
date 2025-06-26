@@ -57,7 +57,8 @@ uint8_t __attribute__((section(".xheep_data_flash_only"))) __attribute__((aligne
 
 #define UART_LOCK()    taskENTER_CRITICAL()
 #define UART_UNLOCK()  taskEXIT_CRITICAL()
-#define UART_PRINTF(...) do { UART_LOCK(); printf(__VA_ARGS__); UART_UNLOCK(); } while(0)
+//#define UART_PRINTF(...) do { UART_LOCK(); printf(__VA_ARGS__); UART_UNLOCK(); } while(0)
+#define UART_PRINTF(...) printf(__VA_ARGS__)
 
 void gpio_button_isr(void) {
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;

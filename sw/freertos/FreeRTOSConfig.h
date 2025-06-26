@@ -91,6 +91,7 @@
 #define configGENERATE_RUN_TIME_STATS	 0
 #define configUSE_QUEUE_SETS                        1
 #define configTASK_NOTIFICATION_ARRAY_ENTRIES       3
+#define configUSE_STATS_FORMATTING_FUNCTIONS	 1
 
 /* newlib reentrancy */
 //#define configUSE_NEWLIB_REENTRANT 1

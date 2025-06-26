@@ -70,7 +70,7 @@ uint8_t __attribute__((section(".xheep_data_flash_only"))) __attribute__((aligne
 // For logging with UART safely from multiple tasks
 #define UART_LOCK()    taskENTER_CRITICAL()
 #define UART_UNLOCK()  taskEXIT_CRITICAL()
-#define UART_PRINTF(...) do { UART_LOCK(); printf(__VA_ARGS__); UART_UNLOCK(); } while(0)
+#define UART_PRINTF(...) printf(__VA_ARGS__)
 
 // Helper to toggle LED for result indication (reuse LD5_R)
 static void toggle_led_passfail(bool pass) {

@@ -29,6 +29,7 @@
 #include "w25q128jw.h"
 #include "soc_ctrl.h"
 #include "csr.h"
+#include "uart.h"
 
 #define GPIO_BUTTON         10
 #define GPIO_INTR           GPIO_INTR_10
@@ -57,7 +58,6 @@ uint8_t __attribute__((section(".xheep_data_flash_only"))) __attribute__((aligne
 
 #define UART_LOCK()    taskENTER_CRITICAL()
 #define UART_UNLOCK()  taskEXIT_CRITICAL()
-//#define UART_PRINTF(...) do { UART_LOCK(); printf(__VA_ARGS__); UART_UNLOCK(); } while(0)
 #define UART_PRINTF(...) printf(__VA_ARGS__)
 
 void gpio_button_isr(void) {
@@ -141,10 +141,42 @@ void vTaskLEDHeartBeat(void *pvParams) {
 }
 
 void vTaskCLIMonitor(void *pvParams) {
+    soc_ctrl_t soc_ctrl;
+    soc_ctrl.base_addr = mmio_region_from_addr((uintptr_t)SOC_CTRL_START_ADDRESS);
+
+    uart_t uart;
+    uart.base_addr   = mmio_region_from_addr((uintptr_t)UART_START_ADDRESS);
+    uart.baudrate    = UART_BAUDRATE;
+    uart.clk_freq_hz = soc_ctrl_get_frequency(&soc_ctrl);
+#ifdef UART_NCO
+    uart.nco         = UART_NCO;
+#else
+    uart.nco         = ((uint64_t)uart.baudrate << (NCO_WIDTH + 4)) / uart.clk_freq_hz;
+#endif
+    uart_init(&uart);
+
     char cmd_buf[32];
     while (1) {
         UART_PRINTF("[CLI] Enter command: ");
-        fgets(cmd_buf, sizeof(cmd_buf), stdin);
+        int idx = 0;
+        while (1) {
+            uint8_t c;
+            uart_getchar(&uart, &c); // Blocking read from UART
+            if (c == '\r' || c == '\n') {
+                UART_PRINTF("\r\n");
+                cmd_buf[idx] = '\0';
+                break;
+            } else if (c == '\b' && idx > 0) {
+                idx--;
+                UART_PRINTF("\b \b");
+            } else if (c >= 32 && c < 127 && idx < (int)sizeof(cmd_buf) - 1) {
+                cmd_buf[idx++] = (char)c;
+                UART_PRINTF("%c", c);
+            }
+        }
+        if (cmd_buf[0] == '\0') {
+            continue; // Ignore empty commands
+        }
 
         if (strncmp(cmd_buf, "heap", 4) == 0) {
             UART_PRINTF("[HEAP] Free: %u bytes\n", xPortGetFreeHeapSize());

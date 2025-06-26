@@ -78,7 +78,7 @@
 #define configAPPLICATION_ALLOCATED_HEAP 1
 #define configTOTAL_HEAP_SIZE		 ((size_t)(12 * 1024))
 #define configMAX_TASK_NAME_LEN		 (12)
-#define configUSE_TRACE_FACILITY	 0 /* TODO: 0 */
+#define configUSE_TRACE_FACILITY	 1 /* TODO: 0 */
 #define configUSE_16_BIT_TICKS		 0
 #define configIDLE_SHOULD_YIELD		 0
 #define configUSE_MUTEXES		 1
@@ -123,6 +123,7 @@ to exclude the API function. */
 #define INCLUDE_xTaskAbortDelay                     1
 #define INCLUDE_xTaskGetHandle                      1
 #define INCLUDE_xSemaphoreGetMutexHolder            1
+#define INCLUDE_uxTaskGetStackHighWaterMark         1
 
 /* Normal assert() semantics without relying on the provision of an assert.h
 header file. */

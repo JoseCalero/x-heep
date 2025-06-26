@@ -32,9 +32,15 @@
 #define FLASH_TASK_PRIO     (tskIDLE_PRIORITY + 2)
 #define BUTTON_TASK_PRIO    (tskIDLE_PRIORITY + 1)
 #define CHECK_TASK_PRIO     (tskIDLE_PRIORITY + 1)
+#define HEARTBEAT_TASK_PRIO (tskIDLE_PRIORITY + 1)
+#define HEARTBEAT_DELAY_MS  1000  // 1 second
 
 /* Const value to play with TICK counts within the APP */
 #define TICK_COUNT                          ( 50 )
+
+#define GPIO_LD5_R  11
+#define GPIO_LD5_B  12
+#define GPIO_LD5_G  13
 
 /* Prototypes for the standard FreeRTOS callback/hook functions implemented
 within this file.  See https://www.freertos.org/a00016.html */
@@ -67,9 +73,8 @@ uint8_t __attribute__((section(".xheep_data_flash_only"))) __attribute__((aligne
 #define UART_PRINTF(...) do { UART_LOCK(); printf(__VA_ARGS__); UART_UNLOCK(); } while(0)
 
 // Helper to toggle LED for result indication (reuse LD5_R)
-#define GPIO_LED        11
 static void toggle_led_passfail(bool pass) {
-    gpio_write(GPIO_LED, pass);
+    gpio_write(GPIO_LD5_R, pass);
 }
 
 void gpio_button_isr(void) {
@@ -98,7 +103,7 @@ void vTaskFlashHandler(void *pvParams) {
 
     if (w25q128jw_init(spi) != FLASH_OK) 
     {
-        UART_PRINTF("[ERROR] SPI init failed!\n");
+        UART_PRINTF("[ERROR ❌] SPI init failed!\n");
         vTaskSuspend(NULL);
     }
 
@@ -119,22 +124,19 @@ void vTaskFlashHandler(void *pvParams) {
 
         w25q_error_codes_t err = w25q128jw_erase_and_write_standard((void *)flash_offset, flash_write_data, FLASH_LENGTH);
         if (err != FLASH_OK) {
-            UART_PRINTF("[ERROR] Flash write failed!\n");
+            UART_PRINTF("[ERROR ❌] Flash write failed!\n");
             continue;
         }
 
         err = w25q128jw_read_standard((void *)flash_offset, flash_read_data, FLASH_LENGTH);
         if (err != FLASH_OK) {
-            UART_PRINTF("[ERROR] Flash read failed!\n");
+            UART_PRINTF("[ERROR ❌] Flash read failed!\n");
             continue;
         }
 
         uint32_t t_end = xTaskGetTickCount();
         uint32_t t_elapsed = (t_end - t_start);
         UART_PRINTF("[BENCH] Flash R/W took %u ticks.\n", t_elapsed);
-
-        CSR_SET_BITS(CSR_REG_MSTATUS, 0x8);
-        CSR_SET_BITS(CSR_REG_MIE, 1 << 11);
 
         xTaskNotifyGive((TaskHandle_t)pvParams); // Notify checker task
     }
@@ -144,6 +146,7 @@ void vTaskCheckCompare(void *pvParams) {
     for (;;) 
     {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        UART_PRINTF("[TASK] Checker task triggered by flash task\n");
         uint32_t errors = 0;
         for (uint32_t i = 0; i < FLASH_LENGTH; i++) {
             if (flash_write_data[i] != flash_read_data[i]) {
@@ -154,6 +157,17 @@ void vTaskCheckCompare(void *pvParams) {
         bool pass = (errors == 0);
         UART_PRINTF("[RESULT] %s\n", pass ? "PASS ✅" : "FAIL ❌");
         toggle_led_passfail(pass);
+    }
+}
+
+void vTaskLEDHeartBeat(void *pvParams) {
+    bool state = false;
+    for (;;) {
+        //gpio_write(GPIO_LD5_R, state);
+        //gpio_write(GPIO_LD5_B, state);
+        //gpio_write(GPIO_LD5_G, state);
+        state = !state;
+        vTaskDelay(pdMS_TO_TICKS(HEARTBEAT_DELAY_MS));
     }
 }
 
@@ -180,7 +194,8 @@ static void print_memory_summary(void) {
     UART_PRINTF("=================================\n\n");
 }
 
-void app_main(void) {
+void app_main(void) 
+{
     gpio_cfg_t cfg_btn = {
         .pin = GPIO_BUTTON,
         .mode = GpioModeIn,
@@ -188,14 +203,22 @@ void app_main(void) {
         .en_intr = true,
         .intr_type = GpioIntrEdgeRising
     };
-    gpio_cfg_t cfg_led = {
-        .pin = GPIO_LED,
-        .mode = GpioModeOutPushPull
-    };
-
     gpio_config(cfg_btn);
-    gpio_config(cfg_led);
-    gpio_write(GPIO_LED, false);
+
+   gpio_result_t gpio_res;
+    gpio_cfg_t pin_cfg = {
+        .pin= GPIO_LD5_R, 
+        .mode= GpioModeOutPushPull
+    };
+    gpio_res = gpio_config(pin_cfg);
+    pin_cfg.pin = GPIO_LD5_B;
+    gpio_res |= gpio_config(pin_cfg);
+    pin_cfg.pin = GPIO_LD5_G;
+	gpio_res |= gpio_config(pin_cfg);
+    if (gpio_res != GpioOk) printf("Failed\n;");
+    gpio_write(GPIO_LD5_R, false);
+    gpio_write(GPIO_LD5_B, false);
+    gpio_write(GPIO_LD5_G, false);
 
     plic_Init();
     plic_irq_set_priority(GPIO_INTR, 1);
@@ -207,7 +230,7 @@ void app_main(void) {
     rv_timer_init(timer_0_1_reg, (rv_timer_config_t){.hart_count = 2, .comparator_count = 1}, &timer_0_1);
 
     CSR_SET_BITS(CSR_REG_MSTATUS, 0x8);
-    CSR_SET_BITS(CSR_REG_MIE, 1 << 11);
+    //CSR_SET_BITS(CSR_REG_MIE, 1 << 11);
 
     // Enable timer interrupt
     uint32_t mask = 1 << 7;
@@ -231,6 +254,8 @@ void app_main(void) {
     xTaskCreate(vTaskButtonWait, "Button", TASK_STACK_SIZE, (void *)xFlashTaskHandle, BUTTON_TASK_PRIO, NULL);
     UART_PRINTF("[MEM] Heap after Button task: %u bytes\n", xPortGetFreeHeapSize());
 
+    xTaskCreate(vTaskLEDHeartBeat, "LED Heartbeat", TASK_STACK_SIZE, NULL, HEARTBEAT_TASK_PRIO, NULL);
+    UART_PRINTF("[MEM] Heap after LED Heartbeat task: %u bytes\n", xPortGetFreeHeapSize());
 
     UART_PRINTF("[BOOT] FreeRTOS Flash Test Ready. Press GPIO %d.\n", GPIO_BUTTON);
 
@@ -253,7 +278,7 @@ void vApplicationMallocFailedHook( void )
 	to query the size of free heap space that remains (although it does not
 	provide information on how the remaining heap might be fragmented). */
 	taskDISABLE_INTERRUPTS();
-	printf( "error: application malloc failed\n\r" );
+	printf( "[ERROR ❌] Application malloc failed\n\r" );
 	__asm volatile( "ebreak" );
 	for( ;; );
 }
@@ -277,21 +302,20 @@ void vApplicationIdleHook( void )
 
 void freertos_risc_v_application_exception_handler(uint32_t mcause)
 {
-	printf("App mcause:%d\r\n", mcause);
+	printf("[ISR] App mcause:%d\r\n", mcause);
 }
 
 void freertos_risc_v_application_interrupt_handler(uint32_t mcause)
 {
     int irq_id = plic_irq_claim(&mcause);
-    printf("Claimed IRQ: %d\r\n", mcause);
+    printf("[ISR] Claimed IRQ: %d\r\n", mcause);
 
     // Dispatch based on IRQ
     if (mcause == GPIO_INTR) {
         gpio_intr_clear_stat(GPIO_INTR);
         gpio_button_isr();
     }
-
-    plic_irq_complete(mcause);
+    plic_irq_complete(&mcause);
 }
 
 void vApplicationStackOverflowHook( TaskHandle_t pxTask, char *pcTaskName )

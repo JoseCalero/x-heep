@@ -1,17 +1,19 @@
 /*
- * FreeRTOS Flash Lab - Refined Version
+ * FreeRTOS Flash Lab - Refined Version with CLI and Heap Monitoring
  * Features:
  * - UART debug and timing benchmarks
  * - Heap stats and stack watermark logging
  * - Mutex-based Flash resource protection
  * - LED heartbeat task
  * - Tick timer setup for FreeRTOS
+ * - UART CLI task for dynamic interaction
  */
 
 #include <FreeRTOS.h>
 #include <task.h>
 #include <queue.h>
 #include <semphr.h>
+#include <timers.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
@@ -27,25 +29,26 @@
 #include "w25q128jw.h"
 #include "soc_ctrl.h"
 #include "csr.h"
-#include "timers.h"
 
 #define GPIO_BUTTON         10
 #define GPIO_INTR           GPIO_INTR_10
 #define GPIO_LED            11
 #define FLASH_LENGTH        1024
-#define TASK_STACK_SIZE     400
+#define TASK_STACK_SIZE     512
 #define FLASH_TASK_PRIO     (tskIDLE_PRIORITY + 2)
 #define BUTTON_TASK_PRIO    (tskIDLE_PRIORITY + 1)
 #define CHECK_TASK_PRIO     (tskIDLE_PRIORITY + 1)
 #define HEARTBEAT_TASK_PRIO (tskIDLE_PRIORITY + 1)
+#define CLI_TASK_PRIO       (tskIDLE_PRIORITY + 1)
 #define HEARTBEAT_DELAY_MS  1000
 #define TICK_COUNT          50
 
-/* Heap allocation */
 __attribute__((section(".heap"), used)) uint8_t ucHeap[configTOTAL_HEAP_SIZE];
 
 static QueueHandle_t xButtonQueue;
 static SemaphoreHandle_t xFlashSem;
+static TaskHandle_t xFlashTaskHandle = NULL;
+static TaskHandle_t xCheckTaskHandle = NULL;
 static rv_timer_t timer_0_1;
 
 uint8_t flash_write_data[FLASH_LENGTH];
@@ -56,9 +59,7 @@ uint8_t __attribute__((section(".xheep_data_flash_only"))) __attribute__((aligne
 #define UART_UNLOCK()  taskEXIT_CRITICAL()
 #define UART_PRINTF(...) do { UART_LOCK(); printf(__VA_ARGS__); UART_UNLOCK(); } while(0)
 
-void gpio_button_isr(void) 
-{
-    UART_PRINTF("[ISR] GPIO ISR Called\n");
+void gpio_button_isr(void) {
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
     uint8_t event = 1;
     xQueueSendFromISR(xButtonQueue, &event, &xHigherPriorityTaskWoken);
@@ -94,11 +95,11 @@ void vTaskFlashHandler(void *pvParams) {
         memset(flash_read_data, 0, FLASH_LENGTH);
         uint32_t t_start = xTaskGetTickCount();
 
-        //xSemaphoreTake(xFlashSem, portMAX_DELAY);
+        xSemaphoreTake(xFlashSem, portMAX_DELAY);
         w25q_error_codes_t err = w25q128jw_erase_and_write_standard((void *)flash_offset, flash_write_data, FLASH_LENGTH);
         if (err == FLASH_OK)
             err = w25q128jw_read_standard((void *)flash_offset, flash_read_data, FLASH_LENGTH);
-        //xSemaphoreGive(xFlashSem);
+        xSemaphoreGive(xFlashSem);
 
         uint32_t t_elapsed = (xTaskGetTickCount() - t_start) * portTICK_PERIOD_MS;
         UART_PRINTF("[BENCH] Flash R/W took %u ms.\n", t_elapsed);
@@ -138,11 +139,35 @@ void vTaskLEDHeartBeat(void *pvParams) {
     }
 }
 
+void vTaskCLIMonitor(void *pvParams) {
+    char cmd_buf[32];
+    while (1) {
+        UART_PRINTF("[CLI] Enter command: ");
+        fgets(cmd_buf, sizeof(cmd_buf), stdin);
+
+        if (strncmp(cmd_buf, "heap", 4) == 0) {
+            UART_PRINTF("[HEAP] Free: %u bytes\n", xPortGetFreeHeapSize());
+        } else if (strncmp(cmd_buf, "stack", 5) == 0) {
+            UART_PRINTF("[STACK] Flash: %u, Checker: %u\n",
+                        uxTaskGetStackHighWaterMark(xFlashTaskHandle),
+                        uxTaskGetStackHighWaterMark(xCheckTaskHandle));
+        } else if (strncmp(cmd_buf, "tasklist", 8) == 0) {
+            char taskList[256];
+            vTaskList(taskList);
+            UART_PRINTF("[TASKLIST]\n%s\n", taskList);
+        } else if (strncmp(cmd_buf, "flash", 5) == 0) {
+            UART_PRINTF("[CLI] Manually triggering flash task.\n");
+            xTaskNotifyGive(xFlashTaskHandle);
+        } else {
+            UART_PRINTF("[CLI] Unknown command\n");
+        }
+    }
+}
+
 void handler_irq_timer(void) {
     configASSERT(rv_timer_reset(&timer_0_1) == kRvTimerOk);
     configASSERT(rv_timer_irq_enable(&timer_0_1, 0, 0, kRvTimerEnabled) == kRvTimerOk);
     configASSERT(rv_timer_arm(&timer_0_1, 0, 0, TICK_COUNT) == kRvTimerOk);
-
     if (xTaskIncrementTick() != 0) vTaskSwitchContext();
     configASSERT(rv_timer_counter_set_enabled(&timer_0_1, 0, kRvTimerEnabled) == kRvTimerOk);
 }
@@ -153,9 +178,7 @@ void vApplicationMallocFailedHook(void) {
     for (;;) __asm volatile("ebreak");
 }
 
-void vApplicationIdleHook(void) {
-    // Optional idle-time debug
-}
+void vApplicationIdleHook(void) {}
 
 void vApplicationStackOverflowHook(TaskHandle_t pxTask, char *pcTaskName) {
     (void)pcTaskName; (void)pxTask;
@@ -164,9 +187,7 @@ void vApplicationStackOverflowHook(TaskHandle_t pxTask, char *pcTaskName) {
     for (;;) __asm volatile("ebreak");
 }
 
-void vApplicationTickHook(void) {
-    // Optional periodic tick hook
-}
+void vApplicationTickHook(void) {}
 
 void freertos_risc_v_application_exception_handler(uint32_t mcause) {
     UART_PRINTF("[ISR] App mcause: %d\n", mcause);
@@ -174,7 +195,7 @@ void freertos_risc_v_application_exception_handler(uint32_t mcause) {
 
 void freertos_risc_v_application_interrupt_handler(uint32_t mcause) {
     int irq_id = plic_irq_claim(&mcause);
-    //UART_PRINTF("[ISR] Claimed IRQ: %d\n", mcause);
+    UART_PRINTF("[ISR] Claimed IRQ: %d\n", mcause);
     if (mcause == GPIO_INTR) {
         gpio_intr_clear_stat(GPIO_INTR);
         gpio_button_isr();
@@ -203,17 +224,14 @@ void app_main(void) {
     xButtonQueue = xQueueCreate(4, sizeof(uint8_t));
     xFlashSem = xSemaphoreCreateMutex();
 
-    TaskHandle_t xFlashTaskHandle = NULL;
-    TaskHandle_t xCheckTaskHandle = NULL;
-
     xTaskCreate(vTaskCheckCompare, "Checker", TASK_STACK_SIZE, NULL, CHECK_TASK_PRIO, &xCheckTaskHandle);
     xTaskCreate(vTaskFlashHandler, "FlashRW", TASK_STACK_SIZE, (void *)xCheckTaskHandle, FLASH_TASK_PRIO, &xFlashTaskHandle);
     xTaskCreate(vTaskButtonWait, "Button", TASK_STACK_SIZE, (void *)xFlashTaskHandle, BUTTON_TASK_PRIO, NULL);
     xTaskCreate(vTaskLEDHeartBeat, "LED Heartbeat", TASK_STACK_SIZE, NULL, HEARTBEAT_TASK_PRIO, NULL);
+    xTaskCreate(vTaskCLIMonitor, "CLI", TASK_STACK_SIZE, NULL, CLI_TASK_PRIO, NULL);
 
     UART_PRINTF("[BOOT] FreeRTOS Flash Test Ready. Press GPIO %d.\n", GPIO_BUTTON);
     vTaskStartScheduler();
-
     while (1);
 }
 
